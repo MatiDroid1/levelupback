@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import org.springframework.stereotype.Service;
 
+import cl.duoc.pedidos360.mspedidos.messaging.producer.PedidoEventPublisher;
 import cl.duoc.pedidos360.mspedidos.model.DetallePedido;
 import cl.duoc.pedidos360.mspedidos.model.Pedido;
 import cl.duoc.pedidos360.mspedidos.repository.PedidoRepository;
@@ -14,9 +15,11 @@ import cl.duoc.pedidos360.mspedidos.repository.PedidoRepository;
 public class PedidoService {
 
     private final PedidoRepository repo;
+    private final PedidoEventPublisher publisher;
 
-    public PedidoService(PedidoRepository repo) {
+    public PedidoService(PedidoRepository repo, PedidoEventPublisher publisher) {
         this.repo = repo;
+        this.publisher = publisher;
     }
 
     public List<Pedido> listarTodos() {
@@ -42,7 +45,9 @@ public class PedidoService {
         }
         pedido.setTotal(total);
 
-        return repo.save(pedido);
+        Pedido guardado = repo.save(pedido);
+        publisher.publicarPedidoCreado(guardado);
+        return guardado;
     }
 
     public Optional<Pedido> cambiarEstado(Long id, String nuevoEstado) {

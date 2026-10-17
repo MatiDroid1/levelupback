@@ -55,6 +55,7 @@ public class SecurityConfig {
                 // cualquier ?usuario= recibido y se usa el username del JWT.
                 .requestMatchers(HttpMethod.GET, "/pedidos", "/pedidos/*").authenticated()
                 .requestMatchers(HttpMethod.POST, "/pedidos").authenticated()
+                //.requestMatchers(HttpMethod.POST, "/pedidos").permitAll() este se uso para pruebas de postman, pero no es seguro dejarlo asi
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
