@@ -258,3 +258,129 @@ El token usado en las pruebas de Postman se extrajo de una sesion real del
 frontend Angular (login con MSAL), inspeccionando el header Authorization
 generado automaticamente por MsalInterceptor en las herramientas de
 desarrollador del navegador. Tiene una vigencia aproximada de 90 minutos.
+
+## Nueva integración
+Para las tareas asincronas (notificaciones, tickets, documentos y descuento de stock) el sistema usa mensajeria desacoplada con RabbitMQ. mspedidos guarda el pedido y publica eventos; los consumidores los procesan por separado, de modo que la logica existente de pedidos y productos no cambia.
+
+                         pedidos.topic (topic)
+ mspedidos  ---------->     pedido.creado --> notificaciones.q --> NotificacionConsumer (mspedidos)
+ (productor)                pedido.stock  --> stock.q          --> StockConsumer (msproductos)
+     |
+     |                    pedidos.direct (direct)
+     +--------------->       ticket       --> tickets.q        --> TicketConsumer (mspedidos)
+                             documento    --> documentos.q     --> DocumentoConsumer (mspedidos)
+
+ Mensajes rechazados (NACK sin reencolar):
+   cada cola principal --> pedidos.dlx (direct) --> <cola>.dlq
+
+Infraestructura: clúster de dos nodos
+
+RabbitMQ se levanta con Docker Compose desde la carpeta infra/: dos nodos (rabbit1 y rabbit2) que forman un clúster mediante rabbitmq.conf (classic_config).
+
+Servicio	AMQP	Consola web
+rabbit1	5672	15672
+rabbit2	5673	15673
+Usuario y clave de desarrollo: admin / admin123.
+rabbit2 espera a que rabbit1 este saludable antes de arrancar.
+Los datos de cada nodo persisten en volumenes de Docker.
+Las colas son clasicas: el clúster da disponibilidad de la administracion y la topologia, pero los mensajes de una cola viven en el nodo donde se creo.
+
+Para verificar el clúster:
+
+docker exec rabbit1 rabbitmqctl cluster_status
+Topologia
+
+Exchanges, todos durables:
+
+Exchange	Tipo	Uso
+pedidos.topic	topic	Notificaciones y descuento de stock
+pedidos.direct	direct	Tickets y documentos
+pedidos.dlx	direct	Dead letter: recibe los mensajes rechazados
+
+Colas, todas durables y con su DLQ:
+
+Cola	Exchange	Routing key	DLQ	Consumidor
+notificaciones.q	pedidos.topic	pedido.creado	notificaciones.dlq	NotificacionConsumer
+tickets.q	pedidos.direct	ticket	tickets.dlq	TicketConsumer
+documentos.q	pedidos.direct	documento	documentos.dlq	DocumentoConsumer
+stock.q	pedidos.topic	pedido.stock	stock.dlq	StockConsumer
+
+Cada cola principal declara x-dead-letter-exchange = pedidos.dlx y una x-dead-letter-routing-key propia (notificaciones.dead, tickets.dead, documentos.dead, stock.dead), con la que el dead letter exchange la lleva a su DLQ.
+
+Configuracion centralizada y separada de la logica
+Nombres centralizados: los nombres de exchanges, colas, DLQ y routing keys estan en application.properties bajo el prefijo app.rabbit.*. El codigo los lee con @Value("${...}") y no hay nombres escritos a mano en las clases de negocio.
+Beans de configuracion: messaging/config/RabbitConfig.java (en mspedidos y en msproductos) declara los beans Queue, Exchange y Binding de cada caso de uso, incluidas las DLQ.
+Separacion de responsabilidades: los servicios y controladores de negocio no contienen configuracion de mensajeria; solo usan componentes ya configurados.
+
+Estructura del paquete messaging en mspedidos:
+
+messaging/
+  config/     RabbitConfig, RabbitStartupCheck
+  producer/   PedidoEventPublisher
+  consumer/   notification/, ticket/
+  document/   DocumentoConsumer
+
+En msproductos: messaging/config/RabbitConfig y messaging/consumer/stock/StockConsumer.
+
+Productor
+
+PedidoEventPublisher publica los eventos con RabbitTemplate despues de guardar el pedido: un mensaje al exchange topic (notificaciones), dos al direct (ticket y documento) y uno al topic con la clave pedido.stock para el descuento de inventario. Si la publicacion falla, el error se registra en el log y el pedido ya guardado no se pierde ni se revierte.
+
+Consumidores y manejo de errores
+
+Los consumidores se implementan con @RabbitListener y se agrupan por dominio funcional (notificacion, ticket, documento, stock). El modo de confirmacion es manual (spring.rabbitmq.listener.simple.acknowledge-mode=manual), asi que cada consumidor decide explicitamente que hacer con cada mensaje:
+
+Situacion	Accion	Resultado
+Procesado correctamente	basicAck	El mensaje se elimina de la cola
+Error no recuperable (datos invalidos, stock insuficiente, JSON invalido)	basicNack sin reencolar	Va a pedidos.dlx y luego a la DLQ
+Error recuperable, primer intento	basicNack con reencolado	Se reintenta una vez
+Error recuperable que se repite (redelivered)	basicNack sin reencolar	Va a la DLQ
+
+Todos los casos quedan registrados en los logs. Un mensaje en una DLQ conserva la cabecera x-death, que indica de que cola vino y el motivo (rejected).
+
+Para demostrar el flujo de error en mspedidos, los consumidores reaccionan a marcas dentro del cuerpo del mensaje: falla-dlq simula un error no recuperable y reintento simula un error recuperable.
+
+Microservicio administrador (msrabbitadmin)
+
+Corre en el puerto 8082 y expone una API REST para administrar el broker. Los controladores solo delegan en RabbitAdminService, que es la unica clase que habla con AmqpAdmin.
+
+Metodo	Ruta	Descripcion
+POST	/queues	Crea una cola (durable por defecto)
+GET	/queues/{name}	Consulta una cola: consumidores y mensajes
+DELETE	/queues/{name}	Elimina una cola (204)
+POST	/exchanges	Crea un exchange: direct, topic, fanout o headers (201)
+DELETE	/exchanges/{name}	Elimina un exchange (204)
+POST	/bindings	Crea un binding cola-exchange con routing key (201)
+DELETE	/bindings	Elimina un binding con el mismo cuerpo (204)
+
+Validaciones:
+
+Los DTO (QueueRequest, ExchangeRequest, BindingRequest) usan @Valid, @NotBlank y @Pattern. El nombre no puede estar vacio, solo admite letras, numeros, punto, guion y guion bajo (maximo 255 caracteres) y no puede empezar con amq..
+El tipo de exchange debe ser direct, topic, fanout o headers.
+Los datos invalidos responden 400 Bad Request con el detalle de cada campo.
+Consultar o eliminar un recurso que no existe responde 404 Not Found con un mensaje claro, definido en ApiExceptionHandler.
+No se pueden eliminar los exchanges reservados (amq.*).
+
+Seguridad: con app.security.enabled=true (valor por defecto) todas las rutas exigen un JWT de Microsoft Entra ID con el rol admin.
+
+Como ejecutar con RabbitMQ
+Levantar el broker:
+cd infra
+docker compose up -d
+
+Consola de administracion en http://44.199.72.29:15672 (admin / admin123).
+
+Levantar los microservicios como en la seccion anterior. mspedidos y msproductos declaran sus colas, exchanges y bindings al arrancar. Para administrar el broker, levantar tambien msrabbitadmin:
+cd msrabbitadmin
+mvnw clean spring-boot:run
+Crear un pedido con POST /pedidos y revisar en la consola web, pestaña Queues, que cada cola principal recibe su mensaje y que msproductos descuenta el stock.
+Despliegue en AWS
+
+En la instancia EC2, RabbitMQ corre en contenedores Docker con el mismo docker-compose de infra/, y los microservicios (incluido msrabbitadmin) corren como archivos .jar en la misma instancia.
+
+Pruebas realizadas
+Clúster: rabbitmqctl cluster_status lista rabbit1 y rabbit2 como nodos de disco y en ejecucion.
+Publicacion: al crear un pedido, cada cola principal recibe su mensaje.
+Flujo de error: un mensaje no recuperable y uno recuperable con un reintento terminan en sus DLQ, con x-death registrando el rechazo.
+Stock: con inventario suficiente el consumidor descuenta y confirma; con inventario insuficiente rechaza el mensaje y lo envia a stock.dlq.
+API de administracion: ciclo completo de creacion y eliminacion de colas, exchanges y bindings, mas las validaciones 400 y 404.
