@@ -2,6 +2,7 @@ services:
   rabbit1:
     image: rabbitmq:3.13-management
     container_name: rabbit1
+    restart: unless-stopped
     hostname: rabbit1
     environment:
       RABBITMQ_ERLANG_COOKIE: pedidos360cookie
@@ -22,6 +23,7 @@ services:
   rabbit2:
     image: rabbitmq:3.13-management
     container_name: rabbit2
+    restart: unless-stopped
     hostname: rabbit2
     depends_on:
       rabbit1:
