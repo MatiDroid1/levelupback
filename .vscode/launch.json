@@ -19,6 +19,16 @@
             "projectName": "msproductos",
             "args": "",
             "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "type": "java",
+            "name": "Spring Boot-MsrabbitadminApplication<msrabbitadmin>",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "mainClass": "cl.duoc.pedidos360.msrabbitadmin.MsrabbitadminApplication",
+            "projectName": "msrabbitadmin",
+            "args": "",
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }

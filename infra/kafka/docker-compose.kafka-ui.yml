@@ -1,0 +1,14 @@
+services:
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    restart: unless-stopped
+    ports: ["8090:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: levelup
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:29092,kafka2:29092,kafka3:29092
+
+networks:
+  default:
+    name: kafka-net
+    external: true

@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 
 import cl.duoc.pedidos360.mspedidos.messaging.producer.PedidoEventPublisher;
+import cl.duoc.pedidos360.mspedidos.messaging.producer.PedidoKafkaPublisher;
 import cl.duoc.pedidos360.mspedidos.model.DetallePedido;
 import cl.duoc.pedidos360.mspedidos.model.Pedido;
 import cl.duoc.pedidos360.mspedidos.repository.PedidoRepository;
@@ -16,10 +17,12 @@ public class PedidoService {
 
     private final PedidoRepository repo;
     private final PedidoEventPublisher publisher;
+    private final PedidoKafkaPublisher kafkaPublisher;
 
-    public PedidoService(PedidoRepository repo, PedidoEventPublisher publisher) {
+    public PedidoService(PedidoRepository repo, PedidoEventPublisher publisher, PedidoKafkaPublisher kafkaPublisher) {
         this.repo = repo;
         this.publisher = publisher;
+        this.kafkaPublisher = kafkaPublisher;
     }
 
     public List<Pedido> listarTodos() {
@@ -47,6 +50,7 @@ public class PedidoService {
 
         Pedido guardado = repo.save(pedido);
         publisher.publicarPedidoCreado(guardado);
+        kafkaPublisher.publicarPedidoCreado(pedido);
         return guardado;
     }
 
