@@ -384,3 +384,72 @@ Publicacion: al crear un pedido, cada cola principal recibe su mensaje.
 Flujo de error: un mensaje no recuperable y uno recuperable con un reintento terminan en sus DLQ, con x-death registrando el rechazo.
 Stock: con inventario suficiente el consumidor descuenta y confirma; con inventario insuficiente rechaza el mensaje y lo envia a stock.dlq.
 API de administracion: ciclo completo de creacion y eliminacion de colas, exchanges y bindings, mas las validaciones 400 y 404.
+
+## Evolución del proyecto
+
+El sistema se construyó en tres etapas, cada una sobre la anterior.
+
+| Evaluación | Incorporación | Tecnologías |
+|---|---|---|
+| EV1 | Microservicios, seguridad con JWT y despliegue en AWS | Spring Boot, Entra ID, API Gateway, EC2 |
+| EV2 | Mensajería asíncrona con confirmación manual y DLQ | RabbitMQ en clúster de dos nodos |
+| EV3 | Streaming de eventos con historial | Kafka (3 brokers), Kafka UI, Docker Compose |
+
+Un pedido recorre las tres etapas: el usuario inicia sesión con Entra ID, la petición pasa por API Gateway con su JWT, `mspedidos` guarda el pedido, RabbitMQ procesa las tareas asociadas y Kafka registra el evento y los movimientos de inventario.
+
+## Integración con Kafka
+
+Kafka complementa a RabbitMQ sin reemplazarlo. RabbitMQ mantiene las tareas con confirmación y DLQ, como el descuento de stock, y Kafka conserva el historial de eventos.
+
+### Infraestructura
+
+Se levanta con Docker Compose desde `infra/kafka/`: tres nodos ZooKeeper y tres brokers (`kafka1`, `kafka2`, `kafka3`, puertos 9092, 9093 y 9094), más Kafka UI.
+
+- Replicación por defecto de 3 y `min.insync.replicas=2`, por lo que el clúster tolera la caída de un broker.
+- Creación automática de tópicos desactivada: los tópicos se crean de forma explícita.
+
+```bash
+cd infra/kafka
+docker compose up -d
+docker compose -f docker-compose.kafka-ui.yml up -d
+```
+
+### Tópicos
+
+Ambos tienen 3 particiones y 3 réplicas.
+
+| Tópico | Configuración | Uso |
+|---|---|---|
+| `pedidos.eventos` | `retention.ms=604800000` (7 días) | Cada pedido creado queda como hecho inmutable, para auditar o reprocesar pedidos recientes |
+| `stock.movimientos` | `cleanup.policy=compact`, clave `productoId` | Conserva el último movimiento de cada producto |
+
+### Flujo de eventos
+mspedidos --(PedidoKafkaPublisher)--> pedidos.eventos
+| grupo msproductos-movimientos
+msproductos <--(PedidoEventosListener)--------+
+msproductos ------------------------> stock.movimientos
+
+text
+
+- **Productor:** `PedidoKafkaPublisher` publica un evento `PEDIDO_CREADO` tras guardar el pedido. La clave es el `pedidoId` y el cuerpo incluye `eventId`, `pedidoId`, `total`, `fecha` e `items`. Si la publicación falla, se registra el error y el pedido no se revierte.
+- **Consumidor:** `PedidoEventosListener` recibe cada evento y publica en `stock.movimientos` un movimiento `SALIDA` por ítem, con el `productoId` como clave.
+- **Escalabilidad:** el grupo `msproductos-movimientos` reparte las particiones entre sus consumidores, por lo que el consumo escala hasta tres instancias.
+
+### Supervisión
+
+Kafka UI (`http://44.199.72.29:8090`) muestra tópicos, configuración, mensajes y grupos. Por línea de comandos:
+
+```bash
+docker exec kafka1 kafka-consumer-groups --bootstrap-server kafka1:29092 \
+  --describe --group msproductos-movimientos
+```
+
+### Pruebas realizadas
+
+| Prueba | Resultado |
+|---|---|
+| Creación de tópicos con 3 particiones y 3 réplicas | Visibles en Kafka UI |
+| `POST /pedidos` | Evento en `pedidos.eventos` con partición y offset |
+| Consumo en `msproductos` | Log `Evento recibido: pedido X` |
+| Movimiento de stock | Mensaje `SALIDA` en `stock.movimientos` |
+| Supervisión del grupo | Lag en 0 |
