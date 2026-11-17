@@ -1,4 +1,4 @@
-# Pedidos360 - LevelUp Gamer - Backend
+#LevelUp Gamer - Backend
 
 Backend del sistema de pedidos para la tienda de hardware gamer LevelUp
 Gamer, compuesto por dos microservicios Spring Boot protegidos con JWT
