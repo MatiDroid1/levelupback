@@ -1,4 +1,5 @@
 package cl.duoc.pedidos360.mspedidos.config;
+
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -22,17 +23,18 @@ import org.springframework.security.web.SecurityFilterChain;
  *
  * No reemplaza a CorsConfig.java: ambas configuraciones conviven, y aqui
  * se reutiliza el CorsConfigurationSource ya definido en CorsConfig
- * (Spring Security lo detecta automaticamente via .cors(Customizer.withDefaults())).
+ * (Spring Security lo detecta automaticamente via
+ * .cors(Customizer.withDefaults())).
  *
  * Reglas de autorizacion (segun README del proyecto):
- * - GET /pedidos            (todos los pedidos)         -> solo admin
- * - GET /pedidos?usuario=.. (pedidos de un usuario)      -> cualquier autenticado
- *                                                           (el controller debe
- *                                                           forzar usuario = propio
- *                                                           si el rol es cliente)
- * - GET /pedidos/{id}       (detalle)                    -> cualquier autenticado
- * - POST /pedidos           (crear pedido)                -> cualquier autenticado
- * - PATCH /pedidos/{id}/estado (cambiar estado)           -> solo admin
+ * - GET /pedidos (todos los pedidos) -> solo admin
+ * - GET /pedidos?usuario=.. (pedidos de un usuario) -> cualquier autenticado
+ * (el controller debe
+ * forzar usuario = propio
+ * si el rol es cliente)
+ * - GET /pedidos/{id} (detalle) -> cualquier autenticado
+ * - POST /pedidos (crear pedido) -> cualquier autenticado
+ * - PATCH /pedidos/{id}/estado (cambiar estado) -> solo admin
  */
 @Configuration
 @EnableWebSecurity
@@ -41,24 +43,35 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .cors(cors -> {})
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .csrf(csrf -> csrf.disable())
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/actuator/health").permitAll()
-                // Cambio de estado: solo admin.
-                .requestMatchers(HttpMethod.PATCH, "/pedidos/*/estado").hasAuthority("APPROLE_admin")
-                // Listar TODOS los pedidos (sin filtro ?usuario=): solo admin.
-                // Como Spring no distingue por query param en requestMatchers,
-                // esta regla de "todos vs propios" se refuerza en el controller
-                // (ver PedidoController): si el rol no es admin, se ignora
-                // cualquier ?usuario= recibido y se usa el username del JWT.
-                .requestMatchers(HttpMethod.GET, "/pedidos", "/pedidos/*").authenticated()
-                .requestMatchers(HttpMethod.POST, "/pedidos").authenticated()
-                //.requestMatchers(HttpMethod.POST, "/pedidos").permitAll() este se uso para pruebas de postman, pero no es seguro dejarlo asi
-                .anyRequest().authenticated()
-            )
-            .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
+                .cors(cors -> {
+                })
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .csrf(csrf -> csrf.disable())
+                .authorizeHttpRequests(auth -> auth
+                        // Documentación pública; los endpoints de negocio mantienen su seguridad.
+                        .requestMatchers(
+                                "/swagger-ui.html",
+                                "/swagger-ui/**",
+                                "/v3/api-docs",
+                                "/v3/api-docs/**")
+                        .permitAll()
+                        .requestMatchers("/actuator/health").permitAll()
+                        // Cambio de estado: solo admin.
+                        .requestMatchers(HttpMethod.PATCH, "/pedidos/*/estado").hasAuthority("APPROLE_admin")
+                        // Listar TODOS los pedidos (sin filtro ?usuario=): solo admin.
+                        // Como Spring no distingue por query param en requestMatchers,
+                        // esta regla de "todos vs propios" se refuerza en el controller
+                        // (ver PedidoController): si el rol no es admin, se ignora
+                        // cualquier ?usuario= recibido y se usa el username del JWT.
+                        .requestMatchers(HttpMethod.GET, "/pedidos", "/pedidos/*").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/pedidos").authenticated()
+                        // .requestMatchers(HttpMethod.POST, "/pedidos").permitAll() este se uso para
+                        // pruebas de postman, pero no es seguro dejarlo asi
+                        .anyRequest().authenticated()
+
+                )
+                .oauth2ResourceServer(
+                        oauth2 -> oauth2.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
 
         return http.build();
     }
@@ -82,7 +95,7 @@ public class SecurityConfig {
             return List.of();
         }
         return roles.stream()
-            .map(rol -> new SimpleGrantedAuthority("APPROLE_" + rol))
-            .collect(Collectors.toList());
+                .map(rol -> new SimpleGrantedAuthority("APPROLE_" + rol))
+                .collect(Collectors.toList());
     }
 }
