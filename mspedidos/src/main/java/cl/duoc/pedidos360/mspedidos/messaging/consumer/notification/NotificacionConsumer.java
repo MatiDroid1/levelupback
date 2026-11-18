@@ -8,13 +8,23 @@ import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
-
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import com.rabbitmq.client.Channel;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class NotificacionConsumer {
 
     private static final Logger log = LoggerFactory.getLogger(NotificacionConsumer.class);
+
+    private final JavaMailSender mailSender;
+
+    public NotificacionConsumer(JavaMailSender mailSender) {
+        this.mailSender = mailSender;
+    }
 
     @RabbitListener(queues = "${app.rabbit.notificaciones.queue}")
     public void recibir(Message message, Channel channel) throws IOException {
@@ -40,11 +50,26 @@ public class NotificacionConsumer {
 
     private void procesar(String body) {
         if (body.contains("falla-dlq")) {
-            throw new IllegalArgumentException("Mensaje invalido para notificacion");
+            throw new IllegalArgumentException(
+                    "Mensaje invalido para notificacion");
         }
+
         if (body.contains("reintento")) {
-            throw new IllegalStateException("Servicio de notificaciones no disponible");
+            throw new IllegalStateException(
+                    "Servicio de notificaciones no disponible");
         }
-        log.info("[NOTIFICACION] Enviando aviso al cliente...");
+
+        SimpleMailMessage correo = new SimpleMailMessage();
+        correo.setFrom("notificaciones@pedidos360.test");
+        correo.setTo("cliente@example.com");
+        correo.setSubject("Pedidos360 - Notificacion de pedido");
+        correo.setText(
+                "Se ha recibido un evento de pedido.\n\n"
+                        + "Detalle del evento:\n"
+                        + body);
+
+        mailSender.send(correo);
+
+        log.info("[NOTIFICACION] Correo enviado al SMTP de Mailtrap");
     }
 }

@@ -29,6 +29,16 @@
             "projectName": "msrabbitadmin",
             "args": "",
             "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "type": "java",
+            "name": "Spring Boot-MskafkaadminApplication<mskafkaadmin>",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "mainClass": "cl.duoc.pedidos360.mskafkaadmin.MskafkaadminApplication",
+            "projectName": "mskafkaadmin",
+            "args": "",
+            "envFile": "${workspaceFolder}/.env"
         }
     ]
 }
