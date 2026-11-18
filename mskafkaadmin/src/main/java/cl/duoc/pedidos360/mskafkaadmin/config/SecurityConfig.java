@@ -11,35 +11,38 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 public class SecurityConfig {
 
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http)
-            throws Exception {
+        @Bean
+        public SecurityFilterChain securityFilterChain(HttpSecurity http)
+                        throws Exception {
 
-        JwtGrantedAuthoritiesConverter rolesConverter =
-                new JwtGrantedAuthoritiesConverter();
+                JwtGrantedAuthoritiesConverter rolesConverter = new JwtGrantedAuthoritiesConverter();
 
-        rolesConverter.setAuthoritiesClaimName("roles");
-        rolesConverter.setAuthorityPrefix("APPROLE_");
+                rolesConverter.setAuthoritiesClaimName("roles");
+                rolesConverter.setAuthorityPrefix("APPROLE_");
 
-        JwtAuthenticationConverter jwtConverter =
-                new JwtAuthenticationConverter();
+                JwtAuthenticationConverter jwtConverter = new JwtAuthenticationConverter();
 
-        jwtConverter.setJwtGrantedAuthoritiesConverter(rolesConverter);
+                jwtConverter.setJwtGrantedAuthoritiesConverter(rolesConverter);
 
-        http
-                .csrf(csrf -> csrf.disable())
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                )
-                .authorizeHttpRequests(auth -> auth
-                        .anyRequest().hasAuthority("APPROLE_admin")
-                )
-                .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt
-                                .jwtAuthenticationConverter(jwtConverter)
-                        )
-                );
+                http
+                                .csrf(csrf -> csrf.disable())
+                                .sessionManagement(session -> session
+                                                .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                                .authorizeHttpRequests(auth -> auth
+                                                // Documentación pública.
+                                                .requestMatchers(
+                                                                "/swagger-ui.html",
+                                                                "/swagger-ui/**",
+                                                                "/v3/api-docs",
+                                                                "/v3/api-docs/**")
+                                                .permitAll()
 
-        return http.build();
-    }
+                                                // El resto del servicio mantiene el acceso exclusivo de administrador.
+                                                .anyRequest().hasAuthority("APPROLE_admin"))
+                                .oauth2ResourceServer(oauth2 -> oauth2
+                                                .jwt(jwt -> jwt
+                                                                .jwtAuthenticationConverter(jwtConverter)));
+
+                return http.build();
+        }
 }
