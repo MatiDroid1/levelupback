@@ -1,6 +1,7 @@
 package cl.duoc.pedidos360.mspedidos.controller;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import java.util.List;
@@ -12,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.server.ResponseStatusException;
 
+import cl.duoc.pedidos360.mspedidos.dto.CrearPedidoRequest;
 import cl.duoc.pedidos360.mspedidos.model.Pedido;
 import cl.duoc.pedidos360.mspedidos.service.PedidoService;
 
@@ -54,7 +56,9 @@ class PedidoControllerTest {
     void administradorPuedeListarTodos() {
         when(service.listarTodos()).thenReturn(List.of());
 
-        controller.listar(null, token("admin@ejemplo.cl", "admin"));
+        controller.listar(
+                null,
+                token("admin@ejemplo.cl", "admin"));
 
         verify(service).listarTodos();
     }
@@ -63,12 +67,14 @@ class PedidoControllerTest {
     void clienteNoPuedeConsultarPedidoAjeno() {
         Pedido pedido = new Pedido();
         pedido.setUsuario("clienteB@ejemplo.cl");
+
         when(service.obtener(10L)).thenReturn(Optional.of(pedido));
 
         ResponseStatusException error = assertThrows(
                 ResponseStatusException.class,
                 () -> controller.obtener(
-                        10L, token("clienteA@ejemplo.cl", "cliente")));
+                        10L,
+                        token("clienteA@ejemplo.cl", "cliente")));
 
         assertEquals(HttpStatus.FORBIDDEN, error.getStatusCode());
     }
@@ -77,10 +83,12 @@ class PedidoControllerTest {
     void clientePuedeConsultarSuPedido() {
         Pedido pedido = new Pedido();
         pedido.setUsuario("clienteA@ejemplo.cl");
+
         when(service.obtener(10L)).thenReturn(Optional.of(pedido));
 
         var respuesta = controller.obtener(
-                10L, token("clienteA@ejemplo.cl", "cliente"));
+                10L,
+                token("clienteA@ejemplo.cl", "cliente"));
 
         assertEquals(HttpStatus.OK, respuesta.getStatusCode());
         assertSame(pedido, respuesta.getBody());
@@ -90,25 +98,51 @@ class PedidoControllerTest {
     void administradorPuedeConsultarPedidoDeOtroUsuario() {
         Pedido pedido = new Pedido();
         pedido.setUsuario("clienteB@ejemplo.cl");
+
         when(service.obtener(10L)).thenReturn(Optional.of(pedido));
 
         var respuesta = controller.obtener(
-                10L, token("admin@ejemplo.cl", "admin"));
+                10L,
+                token("admin@ejemplo.cl", "admin"));
 
         assertEquals(HttpStatus.OK, respuesta.getStatusCode());
+        assertSame(pedido, respuesta.getBody());
     }
 
     @Test
-    void crearUsaLaIdentidadDelTokenYNoLaDelCuerpo() {
-        Pedido pedido = new Pedido();
-        pedido.setUsuario("usuario-falsificado@ejemplo.cl");
-        when(service.crear(pedido)).thenReturn(pedido);
+    void crearUsaIdentidadDelTokenYEntidadesNuevas() {
+        CrearPedidoRequest request = new CrearPedidoRequest(List.of(
+                new CrearPedidoRequest.Item(
+                        1L,
+                        "Teclado",
+                        10000,
+                        2)));
 
-        controller.crear(
-                pedido, token("clienteA@ejemplo.cl", "cliente"));
+        when(service.crear(any(Pedido.class)))
+                .thenAnswer(invocacion -> invocacion.getArgument(0));
 
-        assertEquals("clienteA@ejemplo.cl", pedido.getUsuario());
-        verify(service).crear(pedido);
+        Pedido resultado = controller.crear(
+                request,
+                token("clienteA@ejemplo.cl", "cliente"));
+
+        assertEquals("clienteA@ejemplo.cl", resultado.getUsuario());
+        assertNull(resultado.getId());
+        assertNull(resultado.getEstado());
+        assertNull(resultado.getFecha());
+        assertNull(resultado.getTotal());
+
+        assertEquals(1, resultado.getDetalles().size());
+
+        var detalle = resultado.getDetalles().get(0);
+
+        assertNull(detalle.getId());
+        assertNull(detalle.getSubtotal());
+        assertEquals(Long.valueOf(1L), detalle.getProductoId());
+        assertEquals("Teclado", detalle.getNombreProducto());
+        assertEquals(Integer.valueOf(10000), detalle.getPrecioUnitario());
+        assertEquals(Integer.valueOf(2), detalle.getCantidad());
+
+        verify(service).crear(any(Pedido.class));
     }
 
     @Test
@@ -120,9 +154,45 @@ class PedidoControllerTest {
 
         ResponseStatusException error = assertThrows(
                 ResponseStatusException.class,
-                () -> controller.crear(new Pedido(), sinUsuario));
+                () -> controller.crear(
+                        new CrearPedidoRequest(List.of()),
+                        sinUsuario));
 
         assertEquals(HttpStatus.FORBIDDEN, error.getStatusCode());
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void rechazaPedidoSinProductos() {
+        CrearPedidoRequest request =
+                new CrearPedidoRequest(List.of());
+
+        ResponseStatusException error = assertThrows(
+                ResponseStatusException.class,
+                () -> controller.crear(
+                        request,
+                        token("clienteA@ejemplo.cl", "cliente")));
+
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatusCode());
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void rechazaCantidadNegativa() {
+        CrearPedidoRequest request = new CrearPedidoRequest(List.of(
+                new CrearPedidoRequest.Item(
+                        1L,
+                        "Teclado",
+                        10000,
+                        -1)));
+
+        ResponseStatusException error = assertThrows(
+                ResponseStatusException.class,
+                () -> controller.crear(
+                        request,
+                        token("clienteA@ejemplo.cl", "cliente")));
+
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatusCode());
         verifyNoInteractions(service);
     }
 }

@@ -2,6 +2,10 @@ package cl.duoc.pedidos360.mspedidos.controller;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
+
+import cl.duoc.pedidos360.mspedidos.dto.CrearPedidoRequest;
+import cl.duoc.pedidos360.mspedidos.model.DetallePedido;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -68,15 +72,63 @@ public class PedidoController {
         return ResponseEntity.ok(pedido);
     }
 
-    @PostMapping
+        @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Pedido crear(
-            @RequestBody Pedido pedido,
+            @RequestBody CrearPedidoRequest request,
             @AuthenticationPrincipal Jwt jwt) {
 
-        // El propietario proviene del JWT validado, no del navegador.
-        pedido.setUsuario(usuarioAutenticado(jwt));
+        String usuario = usuarioAutenticado(jwt);
 
+        if (request == null
+                || request.detalles() == null
+                || request.detalles().isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "El pedido debe contener productos");
+        }
+
+        Pedido pedido = new Pedido();
+        pedido.setUsuario(usuario);
+
+        List<DetallePedido> detalles = new ArrayList<>();
+        long total = 0;
+
+        for (CrearPedidoRequest.Item item : request.detalles()) {
+            if (item == null
+                    || item.productoId() == null
+                    || item.productoId() <= 0
+                    || item.nombreProducto() == null
+                    || item.nombreProducto().isBlank()
+                    || item.precioUnitario() == null
+                    || item.precioUnitario() < 0
+                    || item.cantidad() == null
+                    || item.cantidad() <= 0) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Producto, nombre, precio o cantidad inválidos");
+            }
+
+            long subtotal = (long) item.precioUnitario() * item.cantidad();
+
+            if (subtotal > Integer.MAX_VALUE
+                    || total > Integer.MAX_VALUE - subtotal) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "El total supera el máximo admitido");
+            }
+
+            total += subtotal;
+
+            DetallePedido detalle = new DetallePedido();
+            detalle.setProductoId(item.productoId());
+            detalle.setNombreProducto(item.nombreProducto().trim());
+            detalle.setPrecioUnitario(item.precioUnitario());
+            detalle.setCantidad(item.cantidad());
+            detalles.add(detalle);
+        }
+
+        pedido.setDetalles(detalles);
         return service.crear(pedido);
     }
 
