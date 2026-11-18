@@ -51,7 +51,9 @@ public class PedidoService {
 
         for (DetallePedido detalle : pedido.getDetalles()) {
             detalle.setSubtotal(
-                    detalle.getPrecioUnitario() * detalle.getCantidad());
+                    detalle.getPrecioUnitario()
+                            * detalle.getCantidad()
+            );
 
             total += detalle.getSubtotal();
         }
@@ -66,11 +68,23 @@ public class PedidoService {
         return guardado;
     }
 
-    public Optional<Pedido> cambiarEstado(Long id, String nuevoEstado) {
+    public Optional<Pedido> cambiarEstado(
+            Long id,
+            String nuevoEstado,
+            String actor) {
+
         if (nuevoEstado == null || nuevoEstado.isBlank()) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Debes indicar el estado");
+                    "Debes indicar el estado"
+            );
+        }
+
+        if (actor == null || actor.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Debes identificar al autor del cambio"
+            );
         }
 
         return repo.findById(id).map(pedido -> {
@@ -101,7 +115,8 @@ public class PedidoService {
                 throw new ResponseStatusException(
                         HttpStatus.CONFLICT,
                         "Transición no permitida: "
-                                + actual + " -> " + nuevoEstado);
+                                + actual + " -> " + nuevoEstado
+                );
             }
 
             pedido.setEstado(nuevoEstado);
@@ -110,6 +125,12 @@ public class PedidoService {
             if ("ACEPTADO".equals(nuevoEstado)) {
                 publisher.solicitarDescuentoStock(guardado);
             }
+
+            kafkaPublisher.publicarCambioEstado(
+                    guardado,
+                    actual,
+                    actor
+            );
 
             return guardado;
         });

@@ -17,22 +17,30 @@ import cl.duoc.pedidos360.mspedidos.repository.PedidoRepository;
 
 class PedidoServiceTest {
 
+    private static final String ACTOR = "admin@example.com";
+
     private PedidoRepository repo;
+    private PedidoEventPublisher publisher;
+    private PedidoKafkaPublisher kafkaPublisher;
     private PedidoService service;
 
     @BeforeEach
     void preparar() {
         repo = mock(PedidoRepository.class);
+        publisher = mock(PedidoEventPublisher.class);
+        kafkaPublisher = mock(PedidoKafkaPublisher.class);
 
         service = new PedidoService(
                 repo,
-                mock(PedidoEventPublisher.class),
-                mock(PedidoKafkaPublisher.class));
+                publisher,
+                kafkaPublisher
+        );
     }
 
     private Pedido prepararPedido(String estado) {
         Pedido pedido = new Pedido();
         pedido.setId(1L);
+        pedido.setUsuario("cliente@example.com");
         pedido.setEstado(estado);
 
         when(repo.findById(1L)).thenReturn(Optional.of(pedido));
@@ -44,6 +52,7 @@ class PedidoServiceTest {
     @Test
     void permiteElCicloCompletoEnOrden() {
         Pedido pedido = prepararPedido("CREADO");
+        String anterior = "CREADO";
 
         for (String estado : new String[]{
                 "ACEPTADO",
@@ -51,13 +60,27 @@ class PedidoServiceTest {
                 "DESPACHADO",
                 "ENTREGADO"}) {
 
-            Pedido actualizado = service.cambiarEstado(1L, estado)
+            Pedido actualizado = service
+                    .cambiarEstado(1L, estado, ACTOR)
                     .orElseThrow();
 
             assertEquals(estado, actualizado.getEstado());
+
+            verify(kafkaPublisher).publicarCambioEstado(
+                    pedido,
+                    anterior,
+                    ACTOR
+            );
+
+            anterior = estado;
         }
 
         verify(repo, times(4)).save(pedido);
+
+        verify(publisher, times(1))
+                .solicitarDescuentoStock(pedido);
+
+        verifyNoMoreInteractions(publisher, kafkaPublisher);
     }
 
     @Test
@@ -66,50 +89,114 @@ class PedidoServiceTest {
 
         ResponseStatusException error = assertThrows(
                 ResponseStatusException.class,
-                () -> service.cambiarEstado(1L, "DESPACHADO"));
+                () -> service.cambiarEstado(
+                        1L,
+                        "DESPACHADO",
+                        ACTOR
+                )
+        );
 
         assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
         assertEquals("CREADO", pedido.getEstado());
+
         verify(repo, never()).save(any(Pedido.class));
+        verifyNoInteractions(publisher, kafkaPublisher);
     }
 
     @Test
     void permiteCancelarPedidoCreado() {
-        prepararPedido("CREADO");
+        Pedido pedido = prepararPedido("CREADO");
 
-        Pedido resultado = service.cambiarEstado(1L, "CANCELADO")
+        Pedido resultado = service
+                .cambiarEstado(1L, "CANCELADO", ACTOR)
                 .orElseThrow();
 
         assertEquals("CANCELADO", resultado.getEstado());
+
+        verify(repo).save(pedido);
+
+        verify(kafkaPublisher).publicarCambioEstado(
+                pedido,
+                "CREADO",
+                ACTOR
+        );
+
+        verifyNoInteractions(publisher);
     }
 
     @Test
     void rechazaModificarPedidoEntregado() {
-        prepararPedido("ENTREGADO");
+        Pedido pedido = prepararPedido("ENTREGADO");
 
-        assertThrows(
+        ResponseStatusException error = assertThrows(
                 ResponseStatusException.class,
-                () -> service.cambiarEstado(1L, "CREADO"));
+                () -> service.cambiarEstado(
+                        1L,
+                        "CREADO",
+                        ACTOR
+                )
+        );
+
+        assertEquals(HttpStatus.CONFLICT, error.getStatusCode());
+        assertEquals("ENTREGADO", pedido.getEstado());
 
         verify(repo, never()).save(any(Pedido.class));
+        verifyNoInteractions(publisher, kafkaPublisher);
     }
 
     @Test
-    void repetirElEstadoNoVuelveAGuardar() {
+    void repetirElEstadoNoVuelveAGuardarNiPublicar() {
         Pedido pedido = prepararPedido("ACEPTADO");
 
-        Pedido resultado = service.cambiarEstado(1L, "ACEPTADO")
+        Pedido resultado = service
+                .cambiarEstado(1L, "ACEPTADO", ACTOR)
                 .orElseThrow();
 
         assertSame(pedido, resultado);
+
         verify(repo, never()).save(any(Pedido.class));
+        verifyNoInteractions(publisher, kafkaPublisher);
     }
 
     @Test
     void pedidoInexistenteDevuelveOptionalVacio() {
         when(repo.findById(99L)).thenReturn(Optional.empty());
 
-        assertTrue(service.cambiarEstado(99L, "ACEPTADO").isEmpty());
+        assertTrue(
+                service.cambiarEstado(
+                        99L,
+                        "ACEPTADO",
+                        ACTOR
+                ).isEmpty()
+        );
+
         verify(repo, never()).save(any(Pedido.class));
+        verifyNoInteractions(publisher, kafkaPublisher);
+    }
+
+    @Test
+    void rechazaEstadoVacio() {
+        ResponseStatusException error = assertThrows(
+                ResponseStatusException.class,
+                () -> service.cambiarEstado(1L, " ", ACTOR)
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatusCode());
+        verifyNoInteractions(repo, publisher, kafkaPublisher);
+    }
+
+    @Test
+    void rechazaActorVacio() {
+        ResponseStatusException error = assertThrows(
+                ResponseStatusException.class,
+                () -> service.cambiarEstado(
+                        1L,
+                        "ACEPTADO",
+                        " "
+                )
+        );
+
+        assertEquals(HttpStatus.BAD_REQUEST, error.getStatusCode());
+        verifyNoInteractions(repo, publisher, kafkaPublisher);
     }
 }

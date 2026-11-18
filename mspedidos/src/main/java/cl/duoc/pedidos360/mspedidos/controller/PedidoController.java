@@ -72,7 +72,7 @@ public class PedidoController {
         return ResponseEntity.ok(pedido);
     }
 
-        @PostMapping
+    @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Pedido crear(
             @RequestBody CrearPedidoRequest request,
@@ -135,9 +135,16 @@ public class PedidoController {
     @PatchMapping("/{id}/estado")
     public ResponseEntity<Pedido> cambiarEstado(
             @PathVariable("id") Long id,
-            @RequestBody Map<String, String> body) {
+            @RequestBody Map<String, String> body,
+            @AuthenticationPrincipal Jwt jwt) {
 
-        String estado = body.get("estado");
+        if (!esAdmin(jwt)) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Solo un administrador puede cambiar el estado");
+        }
+
+        String estado = body == null ? null : body.get("estado");
 
         if (estado == null || estado.isBlank()) {
             throw new ResponseStatusException(
@@ -145,8 +152,9 @@ public class PedidoController {
                     "Debes indicar el estado");
         }
 
-        // SecurityConfig conserva la restricción de administrador.
-        return service.cambiarEstado(id, estado.trim())
+        String actor = usuarioAutenticado(jwt);
+
+        return service.cambiarEstado(id, estado.trim(), actor)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
